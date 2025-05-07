@@ -1,0 +1,19 @@
+{
+    "mcpServers": {
+      "playwright": {
+        "command": "npx",
+        "args": [
+          "@playwright/mcp@latest"
+        ],
+        "transport": "stdio"
+      },
+      "filesystem": {
+          "command": "npx",
+          "args": [
+              "-y",
+              "@modelcontextprotocol/server-filesystem",
+              "/home/streamlit-mcp-chat"
+          ]
+      }
+    }
+  }

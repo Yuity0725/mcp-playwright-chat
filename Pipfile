@@ -1,0 +1,20 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+langchain = "*"
+streamlit = "*"
+langchain-core = "*"
+python-dotenv = "*"
+langchain-mcp-adapters = "*"
+langgraph = "*"
+langchain-openai = "*"
+langchain-google-genai = "*"
+
+[dev-packages]
+
+[requires]
+python_version = "3.12"
+python_full_version = "3.12.3"
