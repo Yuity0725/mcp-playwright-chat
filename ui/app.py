@@ -2,7 +2,7 @@ import streamlit as st
 import os
 import json
 from typing import List, Dict
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 from dotenv import load_dotenv
@@ -21,6 +21,9 @@ load_dotenv()
 
 # 環境変数からAPIキーを取得
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+GOOGLE_MODEL = os.getenv("GOOGLE_MODEL")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL")
 
 # mcpの設定を読み込む
 with open("mcp_config.json", "r") as f:
@@ -84,15 +87,15 @@ async def main():
             st.markdown(user_input)
         
         # APIキーが環境変数に設定されているか確認
-        if GOOGLE_API_KEY:
+        if OPENAI_API_KEY:
             # AIの応答を生成
             with st.chat_message("assistant"):
                 with st.spinner("考え中..."):
                     # LangChainでChatGPTを呼び出す
-                    llm = ChatGoogleGenerativeAI(
-                        model="gemini-2.0-flash",
+                    llm = ChatOpenAI(
+                        model=OPENAI_MODEL,
                         temperature=0.7,
-                        google_api_key=GOOGLE_API_KEY
+                        openai_api_key=OPENAI_API_KEY
                     )
 
                     async with MultiServerMCPClient(config["mcpServers"]) as mcp_client:
@@ -120,15 +123,14 @@ async def main():
                                     ]
                                     tool_msg = await selected_tool.ainvoke(tool_call)
                                     # ツール呼び出し結果をメッセージとして追加
-                                    tool_response_message = AIMessage(content=str(tool_msg), additional_kwargs={"tool_responses": tool_call})
-                                    filtered_messages.append(tool_response_message)
+                                    filtered_messages.append(tool_msg)
                             else:
                                 logging.info(filtered_messages)
                                 # 元のメッセージリストを更新
                                 st.session_state.messages = filtered_messages
                                 break
         else:
-            st.error("環境変数 'GOOGLE_API_KEY' が設定されていません。.envファイルを確認してください。")
+            st.error("API keyが環境変数に設定されていません。.envファイルを確認してください。")
 
 if __name__ == "__main__":
     import asyncio
