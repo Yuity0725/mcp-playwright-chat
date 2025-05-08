@@ -4,7 +4,7 @@ import json
 from typing import List, Dict
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from dotenv import load_dotenv
 from langchain_mcp_adapters.client import MultiServerMCPClient
 import logging
@@ -64,6 +64,61 @@ def create_prompt_from_system_and_messages(system_prompt: str, messages: List) -
     
     return chat_prompt
 
+def display_human_message(message: HumanMessage):
+    st.markdown(message.content)
+
+def display_ai_message(message: AIMessage):
+    st.markdown(message.content)
+    # ツール呼び出しがある場合は表示
+    if hasattr(message, 'additional_kwargs') and 'tool_calls' in message.additional_kwargs:
+        tool_calls = message.additional_kwargs['tool_calls']
+        if tool_calls:
+            st.info(f"💡 アシスタントがツールを使用しました（{len(tool_calls)}個）")
+
+def display_tool_message(message: ToolMessage):
+    # エクスパンダー（デフォルトで閉じた状態）
+    with st.expander(f"🔧 ツール実行結果 ({message.tool_call_id})", expanded=False):
+        st.code(message.content, language="json")
+
+# メッセージ表示関数
+def display_messages(messages):
+    for message in messages:
+        # メッセージのタイプを判断
+        if isinstance(message, HumanMessage):
+            with st.chat_message("user"):
+                display_human_message(message)
+        
+        elif isinstance(message, AIMessage):
+            with st.chat_message("assistant"):
+                display_ai_message(message)
+        
+        # ツールメッセージをエクスパンダーで表示
+        elif isinstance(message, ToolMessage):
+            with st.chat_message("assistant"):
+                display_tool_message(message)
+
+def process_tool_response(tool_message: ToolMessage) -> ToolMessage:
+    raw_content = tool_message.content
+    # HTMLが含まれているかチェック
+    if isinstance(raw_content, str) and ("<html" in raw_content.lower() or "<!doctype" in raw_content.lower()):
+        # BeautifulSoupなどを使ってHTMLから必要なテキストだけを抽出
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(raw_content, 'html.parser')
+        
+        # 不要なタグを削除（スクリプト、スタイルなど）
+        for tag in soup(['script', 'style', 'meta', 'link', 'svg', 'path']):
+            tag.decompose()
+        
+        # テキストのみを抽出
+        text = soup.get_text(separator='\n', strip=True)
+        
+        # さらにテキストを要約または切り詰め
+        if len(text) > 5000:  # 適切な長さに調整
+            text = text[:5000] + "...(省略されました)"
+        
+        return ToolMessage(content=text, tool_call_id=tool_message.tool_call_id)
+    return tool_message
+
 async def main():
     st.title("MCPチャット")
 
@@ -72,9 +127,7 @@ async def main():
         st.session_state.messages = []
     
     # 過去のメッセージを表示
-    for message in st.session_state.messages:
-        with st.chat_message(message.type):
-            st.markdown(message.content)
+    display_messages(st.session_state.messages)
 
     # ユーザー入力
     user_input = st.chat_input("メッセージを入力してください")
@@ -94,41 +147,53 @@ async def main():
                     # LangChainでChatGPTを呼び出す
                     llm = ChatOpenAI(
                         model=OPENAI_MODEL,
-                        temperature=0.7,
                         openai_api_key=OPENAI_API_KEY
                     )
+
+                    # 応答をまとめて表示するためのリスト
+                    responses = []
 
                     async with MultiServerMCPClient(config["mcpServers"]) as mcp_client:
                         # toolsの読み込み
                         tools = mcp_client.get_tools()
 
                         # 空のコンテンツを持つメッセージを除外
-                        filtered_messages = [msg for msg in st.session_state.messages if msg.content]
+                        #filtered_messages = [msg for msg in st.session_state.messages if msg.content]
                         
                         # tool callingがなくなるまで呼び出し(最大10回)
                         max_iterations = 10
                         count = 0
                         while count < max_iterations:
                             count += 1
-                            llm_with_tools = create_prompt_from_system_and_messages(system_prompt, filtered_messages) | llm.bind_tools(tools)
-                            response = await llm_with_tools.ainvoke({"messages": filtered_messages})
+                            logging.info(st.session_state.messages)
+                            llm_with_tools = create_prompt_from_system_and_messages(system_prompt, st.session_state.messages) | llm.bind_tools(tools)
+                            response = await llm_with_tools.ainvoke({"messages": st.session_state.messages})
                             logging.info(response)
-                            filtered_messages.append(response)
-                            st.markdown(response.content)
+                            st.session_state.messages.append(response)
+                            responses.append(response)
+                            #st.markdown(response.content)
 
                             if response.tool_calls:
                                 for tool_call in response.tool_calls:
                                     selected_tool = {tool.name.lower(): tool for tool in tools}[
                                         tool_call["name"].lower()
                                     ]
-                                    tool_msg = await selected_tool.ainvoke(tool_call)
+                                    tool_messsage = await selected_tool.ainvoke(tool_call)
+                                    logging.info(tool_messsage)
+                                    processed_tool_message = process_tool_response(tool_messsage)
                                     # ツール呼び出し結果をメッセージとして追加
-                                    filtered_messages.append(tool_msg)
+                                    st.session_state.messages.append(processed_tool_message)
+                                    responses.append(tool_messsage)
                             else:
-                                logging.info(filtered_messages)
-                                # 元のメッセージリストを更新
-                                st.session_state.messages = filtered_messages
+                                logging.info(st.session_state.messages)
                                 break
+                    # 最初の応答を表示
+                    if isinstance(responses[0], AIMessage):
+                        display_ai_message(responses[0])
+                    elif isinstance(responses[0], ToolMessage):
+                        display_tool_message(responses[0])
+            # まとめて残りの応答を表示
+            display_messages(responses[1:])
         else:
             st.error("API keyが環境変数に設定されていません。.envファイルを確認してください。")
 
